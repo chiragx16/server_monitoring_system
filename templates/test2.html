@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Monitoring Dashboard</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Custom styles -->
+    <style>
+        /* Apple-inspired color system */
+        :root {
+            --primary-blue: #007AFF;
+            --success-green: #34C759;
+            --warning-orange: #FF9500;
+            --error-red: #FF3B30;
+            --neutral-gray: #8E8E93;
+            --background-primary: #F2F2F7;
+            --background-secondary: #FFFFFF;
+            --text-primary: #000000;
+            --text-secondary: #3C3C43;
+            --text-tertiary: #8E8E93;
+            --separator: #C6C6C8;
+        }
+
+        /* San Francisco font family */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+            background-color: var(--background-primary);
+            color: var(--text-primary);
+        }
+
+        /* Refined card design */
+        .server-card {
+            background: var(--background-secondary);
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+            border: 1px solid var(--separator);
+            transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        }
+
+        .server-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+        }
+
+        /* Loading animation */
+        .loading-pulse {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 0.6;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0.6;
+            }
+        }
+
+        /* Status indicator animation */
+        .status-indicator {
+            position: relative;
+        }
+
+        .status-indicator::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-up::after {
+            background-color: rgba(52, 199, 89, 0.3);
+        }
+
+        .status-down::after {
+            background-color: rgba(255, 59, 48, 0.3);
+        }
+
+        /* Chart container */
+        .chart-container {
+            position: relative;
+            height: 120px;
+        }
+
+        /* Refresh button animation */
+        .fa-spin {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Notification badge animation */
+        .notification-pulse {
+            animation: notificationPulse 1s ease-out;
+        }
+
+        @keyframes notificationPulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.2);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+    </style>
+</head>
+
+<body class="min-h-screen">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-10 backdrop-blur-lg bg-opacity-90">
+        <div class="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <div
+                        class="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
+                        <i class="fas fa-server text-white"></i>
+                    </div>
+                    <h1 class="text-2xl font-semibold">Server Monitoring</h1>
+                </div>
+
+                <div class="flex items-center space-x-4">
+                    <button id="notificationBtn" class="relative p-2 rounded-full hover:bg-gray-100 transition-colors">
+                        <i class="fas fa-bell text-gray-700 text-xl"></i>
+                        <span id="notificationBadge"
+                            class="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs font-medium hidden">0</span>
+                    </button>
+
+                    <button id="refreshBtn" class="p-2 rounded-full hover:bg-gray-100 transition-colors">
+                        <i class="fas fa-sync-alt text-gray-700 text-xl"></i>
+                    </button>
+
+                    <div class="text-sm text-right">
+                        <div id="currentTime" class="font-medium text-gray-900"></div>
+                        <div id="lastRefresh" class="text-xs text-gray-500"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 py-7">
+        <!-- Stats Overview -->
+        <section class="mb-8">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-white rounded-2xl p-5 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">Total Servers</p>
+                            <p id="totalServers" class="text-3xl font-semibold text-gray-900">0</p>
+                        </div>
+
+                        <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                            <i class="fas fa-server text-blue-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-2xl p-5 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">Online</p>
+                            <p id="onlineServers" class="text-3xl font-semibold text-green-600">0</p>
+                        </div>
+
+                        <div class="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                            <i class="fas fa-check-circle text-green-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-2xl p-5 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">Offline</p>
+                            <p id="offlineServers" class="text-3xl font-semibold text-red-600">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center">
+                            <i class="fas fa-times-circle text-red-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-2xl p-5 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">Avg. Uptime</p>
+                            <p id="avgUptime" class="text-3xl font-semibold text-indigo-600">0%</p>
+                        </div>
+                        <div class="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center">
+                            <i class="fas fa-chart-line text-indigo-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Server Cards Container -->
+        <section id="servers" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-3"></section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="glass-effect mt-12 py-4 text-center text-gray-600 text-sm">
+        <p>Server Monitoring Dashboard &copy; 2025 | Auto-refreshing every 5 seconds</p>
+    </footer>
+
+    <script>
+        const REFRESH_INTERVAL = 5000;
+        const charts = {};
+        let downCount = 0;
+        let isInitialLoad = true;
+        let serverData = {}; // Cache for server data
+
+        // Configuration for time ranges in hours
+        const TIME_RANGES = {
+            '5m': 5 / 60,   // 5 minutes in hours
+            '10m': 10 / 60, // 10 minutes in hours
+            '1h': 1,
+            '3h': 3,
+            '5h': 5,
+            '24h': 24
+        };
+
+        // Map to store the currently selected time range for each server
+        const selectedTimeRanges = {};
+        /**
+         * Sanitizes the server key (IP address) to be a valid CSS class name by replacing dots with underscores.
+         * @param {string} key - The original server key (e.g., '10.1.1.25').
+         * @returns {string} - The sanitized key (e.g., '10_1_1_25').
+         */
+        function sanitizeKey(key) {
+            return key.replace(/\./g, '_');
+        }
+
+        /**
+         * Filters the server history based on the specified time duration (in hours, potentially fractional).
+         * @param {Array<{time: string, status: string}>} history - The full history array.
+         * @param {number} durationInHours - The duration of past time to filter for (e.g., 1 for 1 hour, 5/60 for 5 minutes).
+         * @returns {Array<{time: Date, status: string}>} - The filtered history data with time converted to Date objects.
+         */
+        function filterHistory(history, durationInHours) {
+            if (!history || history.length === 0) return [];
+            const cutoff = new Date();
+            // Calculate milliseconds to subtract: durationInHours * 60 minutes/hour * 60 seconds/minute * 1000 ms/second
+            const msToSubtract = durationInHours * 3600 * 1000;
+            cutoff.setTime(cutoff.getTime() - msToSubtract);
+
+            return history
+                .map(h => ({
+                    ...h,
+                    // Convert the time string back to a Date object for comparison (assuming time is ISO string)
+                    time: new Date(h.time)
+                }))
+                .filter(h => h.time >= cutoff);
+        }
+
+
+        /**
+         * Fetches server status data from the API.
+         * @returns {Promise<Object>} - Server status data.
+         */
+        async function fetchStatus() {
+            try {
+                const response = await fetch('/api/status');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching server status:', error);
+                return serverData; // Return cached data if fetch fails
+            }
+        }
+
+        function statusBadge(status) {
+            if (status === 'up') {
+                return 'bg-green-500 text-white status-up';
+            }
+            if (status === 'down') {
+                return 'bg-red-500 text-white status-down';
+            }
+            return 'bg-gray-400 text-white';
+        }
+
+        function statusIcon(status) {
+            if (status === 'up') {
+                return 'fa-check-circle';
+            }
+            if (status === 'down') {
+                return 'fa-exclamation-circle';
+            }
+            return 'fa-question-circle';
+        }
+
+        function statusColor(status) {
+            if (status === 'up') {
+                return 'text-green-600';
+            }
+            if (status === 'down') {
+                return 'text-red-600';
+            }
+            return 'text-gray-600';
+        }
+
+        function createTimeRangeButtons(serverKey) {
+            const safeKey = sanitizeKey(serverKey);
+            const currentDuration = selectedTimeRanges[serverKey] || 1;
+            return `
+                <div class="flex space-x-1 mb-4 p-1 bg-gray-100 rounded-lg">
+                    ${Object.entries(TIME_RANGES).map(([label, duration]) => `
+                        <button
+                            data-duration="${duration}"
+                            data-server-key="${serverKey}"
+                            class="time-range-btn-${safeKey} px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200
+                                ${duration === currentDuration ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}">
+                            ${label}
+                        </button>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function createServerCard(serverKey, server) {
+            // Set default time range if not set (default to 1 hour)
+            if (!selectedTimeRanges[serverKey]) {
+                selectedTimeRanges[serverKey] = 1;
+            }
+
+            const container = document.createElement('div');
+            container.id = `server-${serverKey}`;
+            container.className = `
+                bg-white rounded-xl shadow-lg p-5 server-card
+                hover:shadow-xl transition-all duration-300
+            `;
+
+            container.innerHTML = `
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-gray-800 flex items-center">
+                        <i class="fas fa-server mr-2 text-indigo-600"></i>
+                        ${server.name}
+                    </h2>
+
+                    <div class="status-indicator relative">
+                        <span class="px-3 py-1 rounded-full text-sm font-semibold ${statusBadge(server.status)} flex items-center">
+                            <i class="fas ${statusIcon(server.status)} mr-1"></i>
+                            ${server.status.toUpperCase()}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="space-y-3 mb-4">
+                    <div class="flex items-center text-sm">
+                        <i class="fas fa-network-wired mr-2 text-gray-500 w-5"></i>
+                        <span class="text-gray-600">Host:</span>
+                        <span class="font-mono ml-1 text-gray-800">${server.host}</span>
+                    </div>
+
+                    <div class="flex items-center text-sm">
+                        <i class="fas fa-clock mr-2 text-gray-500 w-5"></i>
+                        <span class="text-gray-600">Last check:</span>
+                        <span class="ml-1 last-check text-gray-800">${server.last_check}</span>
+                    </div>
+
+                    <div class="flex items-center text-sm">
+                        <i class="fas fa-chart-line mr-2 text-gray-500 w-5"></i>
+                        <span class="text-gray-600">Uptime:</span>
+                        <div class="ml-1 flex items-center">
+                            <div class="w-24 bg-gray-200 rounded-full h-2 mr-2">
+                                <div class="uptime-bar bg-${server.status === 'up' ? 'green' : 'red'}-500 h-2 rounded-full"></div>
+                            </div>
+
+                            <span class="uptime font-semibold ${statusColor(server.status)}">
+                                ${server.uptime_percentage.toFixed(2)}%
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Time Range Buttons -->
+                ${createTimeRangeButtons(serverKey)}
+
+                <div class="chart-container">
+                    <canvas id="chart-${serverKey}"></canvas>
+                </div>
+
+                <div class="mt-4 flex justify-end">
+                    <!-- Updated button to link to the new log details page -->
+                    <a href="/logs/${serverKey}" target="_blank" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        View Details (48h Logs)
+                    </a>
+                </div>
+            `;
+
+            document.getElementById('servers').appendChild(container);
+
+            // Attach event listeners for time range buttons
+            const safeKey = sanitizeKey(serverKey);
+
+            container.querySelectorAll(`.time-range-btn-${safeKey}`).forEach(button => {
+                button.addEventListener('click', (e) => {
+                    // Use currentTarget to ensure we get the button element
+                    const btn = e.currentTarget;
+
+                    // Parse as float since we now use fractional hours
+                    const duration = parseFloat(btn.dataset.duration);
+                    const key = btn.dataset.serverKey;
+
+                    // Use cached data instead of fetching again
+                    const currentServerData = serverData[key];
+                    if (currentServerData) {
+                        changeTimeRange(key, duration, currentServerData.history);
+                    }
+                });
+            });
+
+            // Initial chart creation with filtered data
+            const initialDuration = selectedTimeRanges[serverKey];
+            const initialHistory = filterHistory(server.history, initialDuration);
+            createChart(serverKey, initialHistory);
+        }
+
+        function updateServerCard(serverKey, server) {
+            const card = document.getElementById(`server-${serverKey}`);
+            if (!card) {
+                createServerCard(serverKey, server);
+                return;
+            }
+
+            // Update status badge
+            const badge = card.querySelector('.status-indicator span');
+            badge.className = `px-3 py-1 rounded-full text-sm font-semibold ${statusBadge(server.status)} flex items-center`;
+            badge.innerHTML = `
+                <i class="fas ${statusIcon(server.status)} mr-1"></i>
+                <span>${server.status.toUpperCase()}</span>
+            `;
+
+            // Update other elements
+            card.querySelector('.last-check').textContent = server.last_check;
+            card.querySelector('.uptime').textContent = server.uptime_percentage.toFixed(2) + '%';
+            card.querySelector('.uptime').className = `uptime font-semibold ${statusColor(server.status)}`;
+
+            // Update progress bar
+            const progressBar = card.querySelector('.uptime-bar');
+            progressBar.className = `uptime-bar h-2 rounded-full bg-${server.status === 'up' ? 'green' : 'red'}-500`;
+
+            // Update chart with data filtered by current selection
+            const currentDuration = selectedTimeRanges[serverKey] || 1;
+            const filteredHistory = filterHistory(server.history, currentDuration);
+            updateChart(serverKey, filteredHistory);
+        }
+
+        /**
+         * Handles the selection of a new time range for the chart.
+         * @param {string} serverKey - The key of the server.
+         * @param {number} duration - The new time range duration in hours (potentially fractional).
+         * @param {Array<object>} fullHistory - The complete, unfiltered history (needed for re-filtering).
+         */
+        function changeTimeRange(serverKey, duration, fullHistory) {
+            selectedTimeRanges[serverKey] = duration;
+
+            // 1. Update button styling
+            const card = document.getElementById(`server-${serverKey}`);
+            const safeKey = sanitizeKey(serverKey);
+            card.querySelectorAll(`.time-range-btn-${safeKey}`).forEach(btn => {
+                // Parse as float since we now use fractional hours
+                const btnDuration = parseFloat(btn.dataset.duration);
+
+                // Clean up classes for all buttons
+                btn.classList.remove('bg-indigo-600', 'text-white', 'shadow-md');
+                btn.classList.add('text-gray-600', 'hover:bg-white');
+
+                // Apply selected classes to the current button
+                if (btnDuration === duration) {
+                    btn.classList.remove('text-gray-600', 'hover:bg-white');
+                    btn.classList.add('bg-indigo-600', 'text-white', 'shadow-md');
+                }
+            });
+
+            // 2. Filter data and update chart
+            const filteredHistory = filterHistory(fullHistory, duration);
+            updateChart(serverKey, filteredHistory);
+        }
+
+        /**
+         * Gets a human-readable label for the selected time range.
+         * @param {string} serverKey - The key of the server.
+         * @returns {string} - The label (e.g., '1h', '5m').
+         */
+        function getDurationLabel(serverKey) {
+            const duration = selectedTimeRanges[serverKey] || 1;
+            const entry = Object.entries(TIME_RANGES).find(([label, value]) => value === duration);
+            return entry ? entry[0] : `${(duration * 60).toFixed(0)}m`; // Fallback to minutes if fractional
+        }
+
+        function createChart(serverKey, history) {
+            const ctx = document.getElementById(`chart-${serverKey}`).getContext('2d');
+
+            // Function to format the labels for the X axis
+            const getLabels = (h) => {
+                if (h.length < 10) return h.map((_, i) => i + 1);
+                return h.map(item => item.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            };
+
+            charts[serverKey] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: getLabels(history),
+                    datasets: [{
+                        label: `Uptime History (Past ${getDurationLabel(serverKey)})`,
+                        data: history.map(h => h.status === 'up' ? 1 : 0),
+                        borderColor: '#007AFF',
+                        backgroundColor: 'rgba(0, 122, 255, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0, // Set to 0 to hide the dots
+                        pointHoverRadius: 5, // Keep hover radius for tooltips
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 750,
+                        easing: 'easeOutQuart'
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    scales: {
+                        y: {
+                            min: -0.1,
+                            max: 1.1,
+                            ticks: {
+                                callback: v => v >= 1 ? 'UP' : 'DOWN',
+                                stepSize: 1,
+                                color: '#8E8E93',
+                                font: {
+                                    size: 11
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(142, 142, 147, 0.1)',
+                                drawBorder: false
+                            }
+                        },
+                        x: {
+                            type: 'category',
+                            ticks: {
+                                autoSkip: true,
+                                maxTicksLimit: 6,
+                                color: '#8E8E93',
+                                font: {
+                                    size: 11
+                                }
+                            },
+                            grid: {
+                                display: false,
+                                drawBorder: false
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                            titleColor: '#000000',
+                            bodyColor: '#000000',
+                            borderColor: 'rgba(0, 0, 0, 0.1)',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            padding: 10,
+                            displayColors: false,
+                            callbacks: {
+                                title: function (context) {
+                                    const dataIndex = context[0].dataIndex;
+                                    const time = history[dataIndex].time;
+                                    return time.toLocaleString();
+                                },
+                                label: function (context) {
+                                    const dataIndex = context.dataIndex;
+                                    const status = history[dataIndex].status;
+                                    return `Status: ${status.toUpperCase()}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart(serverKey, history) {
+            const chart = charts[serverKey];
+            if (!chart) return;
+
+            // Function to format the labels for the X axis
+            const getLabels = (h) => {
+                // If history is short (e.g., less than 10 points), use index for simplicity
+                if (h.length < 10) return h.map((_, i) => i + 1);
+                // Otherwise, use a simplified time format (e.g., HH:MM)
+                return h.map(item => item.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            };
+
+            chart.data.labels = getLabels(history);
+            chart.data.datasets[0].data = history.map(h => h.status === 'up' ? 1 : 0);
+            chart.data.datasets[0].label = `Uptime History (Past ${getDurationLabel(serverKey)})`;
+            chart.update('none'); // Use 'none' mode for faster updates without animation
+        }
+
+        function updateStats(data) {
+            const servers = Object.values(data);
+            const totalServers = servers.length;
+            const onlineServers = servers.filter(s => s.status === 'up').length;
+            const offlineServers = servers.filter(s => s.status === 'down').length;
+            const avgUptime = servers.reduce((sum, s) => sum + s.uptime_percentage, 0) / totalServers;
+
+            document.getElementById('totalServers').textContent = totalServers;
+            document.getElementById('onlineServers').textContent = onlineServers;
+            document.getElementById('offlineServers').textContent = offlineServers;
+            document.getElementById('avgUptime').textContent = avgUptime.toFixed(2) + '%';
+
+            // Update notification badge
+            const notificationBadge = document.getElementById('notificationBadge');
+            if (offlineServers > 0) {
+                notificationBadge.textContent = offlineServers;
+                notificationBadge.classList.remove('hidden');
+
+                // Add animation if new servers went down
+                if (offlineServers > downCount) {
+                    notificationBadge.classList.add('notification-pulse');
+                    setTimeout(() => {
+                        notificationBadge.classList.remove('notification-pulse');
+                    }, 1000);
+                }
+            } else {
+                notificationBadge.classList.add('hidden');
+            }
+
+            downCount = offlineServers;
+        }
+
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('currentTime').textContent = now.toLocaleTimeString();
+        }
+
+        function updateLastRefresh() {
+            const now = new Date();
+            document.getElementById('lastRefresh').textContent = `Last refresh: ${now.toLocaleTimeString()}`;
+        }
+
+        /**
+         * Refreshes the dashboard data without full page reload.
+         * Only updates the necessary elements with new data.
+         */
+        async function refreshDashboard() {
+            try {
+                // Show loading state
+                if (!isInitialLoad) {
+                    document.getElementById('refreshBtn').querySelector('i').classList.add('fa-spin');
+                }
+
+                // Fetch new data
+                const newData = await fetchStatus();
+
+                // Update cache
+                serverData = newData;
+
+                // Update stats
+                updateStats(newData);
+
+                // Update server cards
+                Object.entries(newData).forEach(([key, server]) => {
+                    updateServerCard(key, server);
+                });
+
+                // Update last refresh time
+                updateLastRefresh();
+
+                // Remove loading state
+                document.getElementById('refreshBtn').querySelector('i').classList.remove('fa-spin');
+
+                // Set initial load flag to false after first load
+                isInitialLoad = false;
+            } catch (error) {
+                console.error('Error refreshing dashboard:', error);
+                document.getElementById('refreshBtn').querySelector('i').classList.remove('fa-spin');
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set up manual refresh button
+            document.getElementById('refreshBtn').addEventListener('click', () => {
+                refreshDashboard();
+            });
+
+            // Update time every second
+            updateTime();
+            setInterval(updateTime, 1000);
+
+            // Initial load
+            refreshDashboard();
+
+            // Set up auto-refresh
+            setInterval(refreshDashboard, REFRESH_INTERVAL);
+        });
+    </script>
+</body>
+
+</html>

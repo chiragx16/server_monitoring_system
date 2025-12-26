@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Logs - {{ server_name }}</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Custom styles -->
+    <style>
+        /* Apple-inspired color system */
+        :root {
+            --primary-blue: #007AFF;
+            --success-green: #34C759;
+            --warning-orange: #FF9500;
+            --error-red: #FF3B30;
+            --neutral-gray: #8E8E93;
+            --background-primary: #F2F2F7;
+            --background-secondary: #FFFFFF;
+            --text-primary: #000000;
+            --text-secondary: #3C3C43;
+            --text-tertiary: #8E8E93;
+            --separator: #C6C6C8;
+        }
+
+        /* San Francisco font family */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+            background-color: var(--background-primary);
+            color: var(--text-primary);
+        }
+
+        /* Glass effect */
+        .glass-effect {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        /* Refined card design */
+        .log-card {
+            background: var(--background-secondary);
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+            border: 1px solid var(--separator);
+            transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        }
+
+        .log-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+        }
+
+        /* Loading animation */
+        .loading-pulse {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
+
+        /* Status indicator animation */
+        .status-indicator {
+            position: relative;
+        }
+
+        .status-indicator::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-up::after {
+            background-color: rgba(52, 199, 89, 0.3);
+        }
+
+        .status-down::after {
+            background-color: rgba(255, 59, 48, 0.3);
+        }
+
+        /* Log entry styles */
+        .log-entry {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-container {
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .log-up {
+            color: var(--success-green);
+        }
+
+        .log-down {
+            color: var(--error-red);
+        }
+
+        .log-timestamp {
+            color: var(--text-tertiary);
+        }
+
+        /* Timeline styles */
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 8px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: var(--separator);
+        }
+
+        .timeline-item {
+            position: relative;
+            margin-bottom: 1rem;
+        }
+
+        .timeline-dot {
+            position: absolute;
+            left: 0;
+            top: 6px;
+            width: 14px;
+            height: 14px;
+            border-radius: 9999px;
+        }
+
+        .dot-up {
+            background: var(--success-green);
+        }
+
+        .dot-down {
+            background: var(--error-red);
+        }
+
+        .dot-info {
+            background: var(--primary-blue);
+        }
+
+        .timeline-content {
+            margin-left: 1.5rem;
+            background: var(--background-secondary);
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--separator);
+        }
+
+        /* Refresh button animation */
+        .fa-spin {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+
+<body class="min-h-screen">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-10 backdrop-blur-lg bg-opacity-90">
+        <div class="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+                        <i class="fas fa-history text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-semibold">Log History: {{ server_name }}</h1>
+                        <p class="text-sm text-gray-500">Server: {{ server_key }}</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button id="refreshBtn" class="p-2 rounded-full hover:bg-gray-100 transition-colors">
+                        <i class="fas fa-sync-alt text-gray-700 text-xl"></i>
+                    </button>
+                    <div class="text-sm text-right">
+                        <div id="currentTime" class="font-medium text-gray-900"></div>
+                        <div id="lastRefresh" class="text-xs text-gray-500"></div>
+                    </div>
+                    <a href="/" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors flex items-center">
+                        <i class="fas fa-arrow-left mr-2"></i>
+                        Back to Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 py-7">
+        <!-- Stats Overview -->
+        <section class="mb-8">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-white rounded-2xl p-5 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">Total Logs</p>
+                            <p id="totalLogs" class="text-3xl font-semibold text-gray-900">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                            <i class="fas fa-file-alt text-blue-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl p-5 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">UP Logs</p>
+                            <p id="upLogs" class="text-3xl font-semibold text-green-600">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                            <i class="fas fa-check-circle text-green-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl p-5 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">DOWN Logs</p>
+                            <p id="downLogs" class="text-3xl font-semibold text-red-600">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center">
+                            <i class="fas fa-times-circle text-red-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl p-5 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-gray-500 mb-1">Uptime Rate</p>
+                            <p id="uptimeRate" class="text-3xl font-semibold text-indigo-600">0%</p>
+                        </div>
+                        <div class="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center">
+                            <i class="fas fa-chart-line text-indigo-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Log Timeline Container -->
+        <section class="log-card p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                <i class="fas fa-history mr-2 text-indigo-600"></i>
+                Server Log Timeline (Past 48 Hours)
+            </h2>
+
+            <div id="loadingIndicator" class="text-center py-10 text-gray-500">
+                <i class="fas fa-spinner fa-spin text-3xl mb-2"></i>
+                <p>Loading server logs...</p>
+            </div>
+
+            <div id="logContent" class="timeline log-container hidden"></div>
+
+            <div id="errorBox" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative hidden mt-4" role="alert">
+                <strong class="font-bold">Error!</strong>
+                <span id="errorMessage" class="block sm:inline">Could not load logs.</span>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="glass-effect mt-12 py-4 text-center text-gray-600 text-sm">
+        <p>Server Log Details &copy; 2025 | Auto-refreshing every 30 seconds</p>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const serverKey = "{{ server_key }}";
+            const logContent = document.getElementById('logContent');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const errorBox = document.getElementById('errorBox');
+            const errorMessage = document.getElementById('errorMessage');
+            const refreshBtn = document.getElementById('refreshBtn');
+
+            // Update time functions
+            function updateTime() {
+                const now = new Date();
+                document.getElementById('currentTime').textContent = now.toLocaleTimeString();
+            }
+
+            function updateLastRefresh() {
+                const now = new Date();
+                document.getElementById('lastRefresh').textContent = `Last refresh: ${now.toLocaleTimeString()}`;
+            }
+
+            // Update time every second
+            updateTime();
+            setInterval(updateTime, 1000);
+
+            // Set up manual refresh button
+            refreshBtn.addEventListener('click', () => {
+                fetchLogs();
+            });
+
+            async function fetchLogs() {
+                try {
+                    // Show loading state
+                    loadingIndicator.classList.remove('hidden');
+                    logContent.classList.add('hidden');
+                    errorBox.classList.add('hidden');
+                    refreshBtn.querySelector('i').classList.add('fa-spin');
+
+                    const response = await fetch(`/api/logs/${serverKey}`);
+                    const data = await response.json();
+
+                    if (data.error) {
+                        errorMessage.textContent = data.error;
+                        errorBox.classList.remove('hidden');
+                        return;
+                    }
+
+                    if (data.logs && data.logs.length > 0) {
+                        // Calculate stats
+                        let upCount = 0;
+                        let downCount = 0;
+
+                        const logsHtml = data.logs.map(log => {
+                            const parts = log.split('|').map(p => p.trim());
+
+                            const timestamp = parts[0];
+                            const serverPart = parts.find(p => p.startsWith('Server:'));
+                            const statusPart = parts.find(p => p.startsWith('Status:'));
+                            const messagePart = parts.find(p => p.startsWith('Message:')) || parts.slice(1).join(' | ');
+
+                            let dotClass = 'dot-info';
+                            if (statusPart?.includes('UP')) {
+                                dotClass = 'dot-up';
+                                upCount++;
+                            }
+                            if (statusPart?.includes('DOWN')) {
+                                dotClass = 'dot-down';
+                                downCount++;
+                            }
+
+                            return `
+                                <div class="timeline-item">
+                                    <div class="timeline-dot ${dotClass}"></div>
+                                    <div class="timeline-content">
+                                        <div class="log-timestamp">${timestamp}</div>
+                                        ${serverPart ? `<div class="font-semibold text-indigo-600">${serverPart}</div>` : ''}
+                                        ${statusPart ? `<div class="${statusPart.includes('DOWN') ? 'log-down' : 'log-up'} font-semibold">${statusPart}</div>` : ''}
+                                        <div class="text-gray-700">${messagePart}</div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('');
+
+                        // Update stats
+                        document.getElementById('totalLogs').textContent = data.logs.length;
+                        document.getElementById('upLogs').textContent = upCount;
+                        document.getElementById('downLogs').textContent = downCount;
+                        const uptimeRate = data.logs.length > 0 ? (upCount / data.logs.length * 100).toFixed(2) : 0;
+                        document.getElementById('uptimeRate').textContent = uptimeRate + '%';
+
+                        logContent.innerHTML = logsHtml;
+                        logContent.classList.remove('hidden');
+
+                        // Scroll to the bottom to see the newest logs immediately
+                        logContent.scrollTop = logContent.scrollHeight;
+                    } else {
+                        logContent.innerHTML = '<p class="text-gray-500">No log entries found for the past 48 hours.</p>';
+                        logContent.classList.remove('hidden');
+                        
+                        // Update stats
+                        document.getElementById('totalLogs').textContent = 0;
+                        document.getElementById('upLogs').textContent = 0;
+                        document.getElementById('downLogs').textContent = 0;
+                        document.getElementById('uptimeRate').textContent = '0%';
+                    }
+
+                    updateLastRefresh();
+                } catch (error) {
+                    console.error("Error fetching logs:", error);
+                    errorMessage.textContent = 'A network or server error occurred.';
+                    errorBox.classList.remove('hidden');
+                } finally {
+                    loadingIndicator.classList.add('hidden');
+                    refreshBtn.querySelector('i').classList.remove('fa-spin');
+                }
+            }
+
+            // Initial load
+            fetchLogs();
+            
+            // Set up a refresh interval for the log view
+            setInterval(fetchLogs, 30000);
+        });
+    </script>
+</body>
+
+</html>
