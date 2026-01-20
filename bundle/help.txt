@@ -4,3 +4,7 @@ do this:
 2. give certi path in config.yaml
 3. update hosts file (C:\Windows\System32\drivers\etc\hosts) : 127.0.0.1 monitor.dashboard.com
 4. Install certi in the "Trusted Root Certification Authority"
+
+If you want to make exe, install pyinstaller and run this:
+pyinstaller --onedir --console --name server_monitoring main.py
+then copy bundle folder to dist folder where your exe is created

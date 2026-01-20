@@ -1,7 +1,8 @@
 .vscode/
 __pycache__/
 venv/
-
+build/
+dist/
 
 servers.json
 config.yaml
@@ -10,5 +11,4 @@ cert.crt
 cert.key
 cert.pfx
 
-
-sms.py
+tree.txt

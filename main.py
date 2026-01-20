@@ -7,16 +7,30 @@ import json
 import subprocess
 import platform
 import os
+import sys
 import yaml
 import ssl
 from datetime import datetime, timedelta
 from notifications import send_notification
 
+def get_base_dir():
+    """
+    Returns directory where the executable is located.
+    Works for both normal Python and PyInstaller exe.
+    """
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
+BUNDLE_DIR = os.path.join(BASE_DIR, "bundle")
+
+
 
 # --- Configuration ---
 
 # Load configuration from YAML file
-CONFIG_FILE = 'config.yaml'
+CONFIG_FILE = os.path.join(BUNDLE_DIR,'config.yaml')
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -65,7 +79,7 @@ fail_threshold = config.get("ping_config", {}).get("fail_threshold", 2)
 
 
 # Load servers from JSON file
-SERVERS_FILE = 'servers.json'
+SERVERS_FILE = os.path.join(BUNDLE_DIR,'servers.json')
 def load_servers():
     if os.path.exists(SERVERS_FILE):
         with open(SERVERS_FILE, 'r') as f:
@@ -79,19 +93,24 @@ def load_servers():
         return []
 
 
-INTERVAL = 1800     # Check interval in seconds (30 minutes)
-RECHECK_DELAY = 120 # Recheck delay in seconds (2 minutes)
-PING_COUNT = 4      # Number of ping packets to send
-TIMEOUT = 1         # Timeout of each ping
-FAIL_THRESHOLD = 2  # Minimum failures to trigger recheck
-LOG_FILE = 'server_monitoring.log'
+INTERVAL = ping_interval
+RECHECK_DELAY = recheck_delay
+PING_COUNT = ping_count
+TIMEOUT = ping_timeout
+FAIL_THRESHOLD = fail_threshold
+LOG_FILE = os.path.join(BUNDLE_DIR,'server_monitoring.log')
 
 # Global dictionary to store status for all servers
 # Key: host:port, Value: status dictionary
 all_servers_status = {}
 
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BUNDLE_DIR, "templates"),
+    static_folder=os.path.join(BUNDLE_DIR, "static")
+)
+
 CORS(app)
 
 # --- Logging Function ---
@@ -152,106 +171,138 @@ def check_server_status(host):
     # First check
     success_count, total_count = ping_host_multiple(host, PING_COUNT, TIMEOUT)
     fail_count = total_count - success_count
-    
-    log_message = f"1st check: {success_count}/{total_count} pings."
-    
-    # If 2 or more packets failed, recheck after 2 minutes
+
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] "
+        f"Server {host}: 1st check: {success_count}/{total_count} pings."
+    )
+
+    # Trigger recheck
     if fail_count >= FAIL_THRESHOLD:
-        log_status(host, 'warning', f"{log_message}. Waiting {RECHECK_DELAY} seconds for recheck...")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Server {host}: {log_message}. Rechecking in 2 minutes...")
-        
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] "
+            f"Server {host}: Rechecking in {RECHECK_DELAY} seconds..."
+        )
+
         time.sleep(RECHECK_DELAY)
-        
+
         # Second check
-        success_count_recheck, total_count_recheck = ping_host_multiple(host, PING_COUNT, TIMEOUT)
-        fail_count_recheck = total_count_recheck - success_count_recheck
-        
-        recheck_message = f"Recheck: {success_count_recheck}/{total_count_recheck} pings"
-        
-        # If still 2 or more packets fail, mark as down
-        if fail_count_recheck >= FAIL_THRESHOLD:
-            final_message = f"{log_message}. {recheck_message}."
-            return False, final_message
+        success_recheck, total_recheck = ping_host_multiple(host, PING_COUNT, TIMEOUT)
+        fail_recheck = total_recheck - success_recheck
+
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] "
+            f"Server {host}: 2nd check: {success_recheck}/{total_recheck} pings."
+        )
+
+        if fail_recheck >= FAIL_THRESHOLD:
+            return False, (
+                f"1st check: {success_count}/{total_count}. "
+                f"2nd check: {success_recheck}/{total_recheck}."
+            )
         else:
-            final_message = f"{log_message}. {recheck_message}. Server recovered."
-            return True, final_message
+            return True, (
+                f"1st check: {success_count}/{total_count}. "
+                f"2nd check: {success_recheck}/{total_recheck}. Server recovered."
+            )
+
+    # No recheck needed
+    return True, f"1st check: {success_count}/{total_count}."
+
+def check_single_server(server):
+    host = server['host']
+    name = server['name']
+    server_key = host
+
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking server: {name} ({host})")
+
+    is_up, detail_message = check_server_status(host)
+
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if server_key not in all_servers_status:
+        all_servers_status[server_key] = {
+            'name': name,
+            'host': host,
+            'status': 'unknown',
+            'last_check': None,
+            'check_count': 0,
+            'up_count': 0,
+            'down_count': 0,
+            'uptime_percentage': 0,
+            'history': []
+        }
+
+    status_data = all_servers_status[server_key]
+    new_status = 'up' if is_up else 'down'
+
+    if new_status != status_data['status']:
+        log_status(
+            server_key,
+            new_status,
+            f"Status changed from {status_data['status']} to {new_status}. {detail_message}"
+        )
+
+        send_notification(
+            server_name=name,
+            host=host,
+            status=new_status,
+            message=detail_message
+        )
+    elif new_status == 'down':
+        log_status(server_key, new_status, f"Server remains DOWN. {detail_message}")
+
+    status_data['last_check'] = current_time
+    status_data['check_count'] += 1
+    status_data['status'] = new_status
+
+    if is_up:
+        status_data['up_count'] += 1
     else:
-        # Server is up
-        return True, log_message
+        status_data['down_count'] += 1
+
+    status_data['uptime_percentage'] = (
+        status_data['up_count'] / status_data['check_count']
+    ) * 100
+
+    now = datetime.now()
+    status_data['history'].append({'time': now, 'status': new_status})
+
+    cutoff = now - timedelta(hours=48)
+    status_data['history'] = [
+        h for h in status_data['history'] if h['time'] >= cutoff
+    ]
 
 def update_status():
     global all_servers_status
 
     while True:
         SERVERS = load_servers()
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         active_hosts = set()
+        threads = []
 
         for server in SERVERS:
-            host = server['host']
-            active_hosts.add(host)
-            server_key = host
-            
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking server: {server['name']} ({host})")
-            
-            is_up, detail_message = check_server_status(host)
+            active_hosts.add(server['host'])
 
-            if server_key not in all_servers_status:
-                all_servers_status[server_key] = {
-                    'name': server['name'],
-                    'host': host,
-                    'status': 'unknown',
-                    'last_check': None,
-                    'check_count': 0,
-                    'up_count': 0,
-                    'down_count': 0,
-                    'uptime_percentage': 0,
-                    'history': []
-                }
+            t = threading.Thread(
+                target=check_single_server,
+                args=(server,)
+            )
+            t.start()
+            threads.append(t)
 
-            status_data = all_servers_status[server_key]
-            new_status = 'up' if is_up else 'down'
+        # Wait for all server checks to finish
+        for t in threads:
+            t.join()
 
-            # Log status changes and send notifications
-            if new_status != status_data['status']:
-                log_status(server_key, new_status, 
-                    f"Status changed from {status_data['status']} to {new_status}. {detail_message}")
-                
-                # Send notification for status change
-                send_notification(
-                    server_name=server['name'],
-                    host=host,
-                    status=new_status,
-                    message=detail_message
-                )
-            elif new_status == 'down':
-                log_status(server_key, new_status, f"Server remains DOWN. {detail_message}")
-
-            status_data['last_check'] = current_time
-            status_data['check_count'] += 1
-            status_data['status'] = new_status
-
-            if is_up:
-                status_data['up_count'] += 1
-            else:
-                status_data['down_count'] += 1
-
-            if status_data['check_count'] > 0:
-                status_data['uptime_percentage'] = (status_data['up_count'] / status_data['check_count']) * 100
-
-            now = datetime.now()
-            status_data['history'].append({'time': now, 'status': new_status})
-            
-            cutoff = now - timedelta(hours=48)
-            status_data['history'] = [h for h in status_data['history'] if h['time'] >= cutoff]
-
-        # Remove servers that are no longer in servers.json
+        # Remove deleted servers
         for key in list(all_servers_status.keys()):
             if key not in active_hosts:
                 del all_servers_status[key]
 
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Check cycle completed. Next check in 30 minutes.")
         time.sleep(INTERVAL)
+
 
 
 @app.route('/')
@@ -323,6 +374,8 @@ def get_server_logs(server_key):
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     SERVERS = load_servers()
     ssl_context = None  # Default is no SSL
 
@@ -338,10 +391,10 @@ if __name__ == "__main__":
 
     print("Starting server dashboard...")
     print(f"Monitoring {len(SERVERS)} servers.")
-    print(f"Check interval: {INTERVAL} seconds (30 minutes)")
+    print(f"Check interval: {INTERVAL} seconds.")
     print(f"Ping packets per check: {PING_COUNT}")
     print(f"Fail threshold for recheck: {FAIL_THRESHOLD} packets")
-    print(f"Recheck delay: {RECHECK_DELAY} seconds (2 minutes)")
+    print(f"Recheck delay: {RECHECK_DELAY} seconds")
     
 
     # Check if SSL cert and key are provided (not empty strings)

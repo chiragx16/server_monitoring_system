@@ -1,4 +1,5 @@
 import os
+import sys
 import yaml
 import smtplib
 from email.mime.text import MIMEText
@@ -7,9 +8,22 @@ from datetime import datetime
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 
+def get_base_dir():
+    """
+    Returns directory where the executable is located.
+    Works for both normal Python and PyInstaller exe.
+    """
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
+BUNDLE_DIR = os.path.join(BASE_DIR, "bundle")
+
+
 # --- Configuration Loading ---
 
-CONFIG_FILE = 'config.yaml'
+CONFIG_FILE = os.path.join(BUNDLE_DIR,'config.yaml')
 
 def load_notification_config():
     """Load notification configuration from YAML file."""
