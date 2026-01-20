@@ -1,5 +1,3 @@
-# server_dashboard.py
-import socket
 import time
 from datetime import datetime
 from flask import Flask, render_template, jsonify, send_from_directory, abort
@@ -9,27 +7,83 @@ import json
 import subprocess
 import platform
 import os
+import yaml
+import ssl
 from datetime import datetime, timedelta
+from notifications import send_notification
 
 
 # --- Configuration ---
-# Load servers from JSON file
-CONFIG_FILE = 'servers.json'
-def load_servers():
+
+# Load configuration from YAML file
+CONFIG_FILE = 'config.yaml'
+
+def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as f:
             try:
+                config = yaml.safe_load(f)
+                return config
+            except yaml.YAMLError as e:
+                print(f"Error reading {CONFIG_FILE}: {e}")
+                return {}
+    else:
+        print(f"{CONFIG_FILE} not found. Using default configuration.")
+        return {
+            "run": {
+                "host": "0.0.0.0",
+                "port": 9898
+            },
+            "ssl": {
+                "cert": "",
+                "key": ""
+            },
+            "ping_config": {  # Default ping configuration
+                "interval": 1800,
+                "recheck_delay": 120,
+                "ping_count": 4,
+                "timeout": 1,
+                "fail_threshold": 2
+            }
+        }
+
+# Load the configuration from YAML
+config = load_config()
+
+# Extracting values from the loaded configuration
+host = config.get("run", {}).get("host", "0.0.0.0")
+port = config.get("run", {}).get("port", 9898)
+ssl_cert = config.get("ssl", {}).get("cert", "")
+ssl_key = config.get("ssl", {}).get("key", "")
+
+# Extract ping-related configuration
+ping_interval = config.get("ping_config", {}).get("interval", 1800)
+recheck_delay = config.get("ping_config", {}).get("recheck_delay", 120)
+ping_count = config.get("ping_config", {}).get("ping_count", 4)
+ping_timeout = config.get("ping_config", {}).get("timeout", 1)
+fail_threshold = config.get("ping_config", {}).get("fail_threshold", 2)
+
+
+# Load servers from JSON file
+SERVERS_FILE = 'servers.json'
+def load_servers():
+    if os.path.exists(SERVERS_FILE):
+        with open(SERVERS_FILE, 'r') as f:
+            try:
                 return json.load(f)
             except json.JSONDecodeError as e:
-                print(f"Error reading {CONFIG_FILE}: {e}")
+                print(f"Error reading {SERVERS_FILE}: {e}")
                 return []
     else:
-        print(f"{CONFIG_FILE} not found. No servers loaded.")
+        print(f"{SERVERS_FILE} not found. No servers loaded.")
         return []
 
 
-INTERVAL = 30       # Check interval in seconds
-TIMEOUT = 5         # Connection timeout in seconds
+INTERVAL = 1800     # Check interval in seconds (30 minutes)
+RECHECK_DELAY = 120 # Recheck delay in seconds (2 minutes)
+PING_COUNT = 4      # Number of ping packets to send
+TIMEOUT = 1         # Timeout of each ping
+FAIL_THRESHOLD = 2  # Minimum failures to trigger recheck
 LOG_FILE = 'server_monitoring.log'
 
 # Global dictionary to store status for all servers
@@ -55,42 +109,82 @@ def log_status(server_key, status, message):
     except IOError as e:
         print(f"Error writing to log file {LOG_FILE}: {e}")
 
-def ping_host(host, timeout=2):
+def ping_host_multiple(host, count=4, timeout=2):
     """
-    Ping a host to check network connectivity.
-    Returns True if host responds, False otherwise.
+    Ping a host multiple times and return the number of successful pings.
+    Returns tuple: (successful_pings, total_pings)
     """
     system = platform.system().lower()
+    successful_pings = 0
 
-    if system == "windows":
-        # -n 1 = send 1 ping
-        # -w timeout in milliseconds
-        cmd = ["ping", "-n", "1", "-w", str(timeout * 1000), host]
+    for i in range(count):
+        if system == "windows":
+            # -n 1 = send 1 ping
+            # -w 1000 = timeout 1 second
+            cmd = ["ping", "-n", "1", "-w", str(timeout * 1000), host]
+        else:
+            # -c 1 = send 1 ping
+            # -W 1 = timeout 1 second
+            cmd = ["ping", "-c", "1", "-W", str(timeout), host]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            if result.returncode == 0:
+                successful_pings += 1
+        except Exception as e:
+            print(f"Ping {i+1} failed for {host}: {e}")
+    
+    return successful_pings, count
+
+def check_server_status(host):
+    """
+    Check server status with recheck logic:
+    1. Send 4 pings
+    2. If 2+ fail, wait 2 minutes and recheck
+    3. If still 2+ fail after recheck, mark as down
+    
+    Returns: (is_up, detail_message)
+    """
+    # First check
+    success_count, total_count = ping_host_multiple(host, PING_COUNT, TIMEOUT)
+    fail_count = total_count - success_count
+    
+    log_message = f"1st check: {success_count}/{total_count} pings."
+    
+    # If 2 or more packets failed, recheck after 2 minutes
+    if fail_count >= FAIL_THRESHOLD:
+        log_status(host, 'warning', f"{log_message}. Waiting {RECHECK_DELAY} seconds for recheck...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Server {host}: {log_message}. Rechecking in 2 minutes...")
+        
+        time.sleep(RECHECK_DELAY)
+        
+        # Second check
+        success_count_recheck, total_count_recheck = ping_host_multiple(host, PING_COUNT, TIMEOUT)
+        fail_count_recheck = total_count_recheck - success_count_recheck
+        
+        recheck_message = f"Recheck: {success_count_recheck}/{total_count_recheck} pings"
+        
+        # If still 2 or more packets fail, mark as down
+        if fail_count_recheck >= FAIL_THRESHOLD:
+            final_message = f"{log_message}. {recheck_message}."
+            return False, final_message
+        else:
+            final_message = f"{log_message}. {recheck_message}. Server recovered."
+            return True, final_message
     else:
-        # -c 1 = send 1 ping
-        # -W timeout in seconds
-        cmd = ["ping", "-c", "1", "-W", str(timeout), host]
-
-    try:
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        return result.returncode == 0
-    except Exception as e:
-        print(f"Ping failed for {host}: {e}")
-        return False
+        # Server is up
+        return True, log_message
 
 def update_status():
     global all_servers_status
 
     while True:
-        # Load servers on every check to pick up new/removed servers
         SERVERS = load_servers()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Keep track of active hosts to remove deleted servers later
         active_hosts = set()
 
         for server in SERVERS:
@@ -98,7 +192,9 @@ def update_status():
             active_hosts.add(host)
             server_key = host
             
-            is_up = ping_host(host, TIMEOUT)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking server: {server['name']} ({host})")
+            
+            is_up, detail_message = check_server_status(host)
 
             if server_key not in all_servers_status:
                 all_servers_status[server_key] = {
@@ -116,10 +212,20 @@ def update_status():
             status_data = all_servers_status[server_key]
             new_status = 'up' if is_up else 'down'
 
+            # Log status changes and send notifications
             if new_status != status_data['status']:
-                log_status(server_key, new_status, f"Status changed from {status_data['status']} to {new_status}")
-            if new_status == 'down':
-                log_status(server_key, new_status, "Server is currently unreachable.")
+                log_status(server_key, new_status, 
+                    f"Status changed from {status_data['status']} to {new_status}. {detail_message}")
+                
+                # Send notification for status change
+                send_notification(
+                    server_name=server['name'],
+                    host=host,
+                    status=new_status,
+                    message=detail_message
+                )
+            elif new_status == 'down':
+                log_status(server_key, new_status, f"Server remains DOWN. {detail_message}")
 
             status_data['last_check'] = current_time
             status_data['check_count'] += 1
@@ -135,6 +241,7 @@ def update_status():
 
             now = datetime.now()
             status_data['history'].append({'time': now, 'status': new_status})
+            
             cutoff = now - timedelta(hours=48)
             status_data['history'] = [h for h in status_data['history'] if h['time'] >= cutoff]
 
@@ -143,6 +250,7 @@ def update_status():
             if key not in active_hosts:
                 del all_servers_status[key]
 
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Check cycle completed. Next check in 30 minutes.")
         time.sleep(INTERVAL)
 
 
@@ -189,44 +297,34 @@ def log_details_page(server_key):
 @app.route('/api/logs/<server_key>')
 def get_server_logs(server_key):
     """
-    Filters the log file for entries of a specific server within the last 48 hours.
+    Retrieves ALL log entries for a specific server (no time limit).
     """
-    cutoff_time = datetime.now() - timedelta(hours=48)
     log_entries = []
 
     try:
         with open(LOG_FILE, 'r') as f:
             # Read all lines and reverse to process from newest to oldest
             for line in reversed(f.readlines()):
-                # Extract timestamp and server key from the log line format: 
-                # [YYYY-MM-DD HH:MM:SS] | Server: <key> | ...
-                
-                try:
-                    # Check if the line contains the server key
-                    if f"Server: {server_key}" in line:
-                        timestamp_str = line[1:20] # [YYYY-MM-DD HH:MM:SS]
-                        log_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-                        
-                        if log_timestamp >= cutoff_time:
-                            log_entries.append(line.strip())
-                        else:
-                            # Since we are reading in reverse chronological order, 
-                            # we can stop once we hit the cutoff time
-                            break 
-                except ValueError:
-                    # Ignore lines with malformed timestamps
-                    continue
+                # Check if the line contains the server key
+                if f"Server: {server_key}" in line:
+                    log_entries.append(line.strip())
+                    
     except FileNotFoundError:
         return jsonify({"logs": [], "error": "Log file not found."})
     except Exception as e:
         return jsonify({"logs": [], "error": f"An error occurred reading the log file: {e}"})
 
     # Reverse back to chronological order (oldest to newest) for display
-    return jsonify({"logs": log_entries[::-1], "server_name": all_servers_status.get(server_key, {}).get('name', 'Unknown')})
+    return jsonify({
+        "logs": log_entries[::-1], 
+        "server_name": all_servers_status.get(server_key, {}).get('name', 'Unknown'),
+        "total_logs": len(log_entries)
+    })
 
 
 if __name__ == "__main__":
     SERVERS = load_servers()
+    ssl_context = None  # Default is no SSL
 
     # Start the status update thread
     status_thread = threading.Thread(target=update_status)
@@ -240,7 +338,27 @@ if __name__ == "__main__":
 
     print("Starting server dashboard...")
     print(f"Monitoring {len(SERVERS)} servers.")
-    print("Access the dashboard at http://localhost:5000")
+    print(f"Check interval: {INTERVAL} seconds (30 minutes)")
+    print(f"Ping packets per check: {PING_COUNT}")
+    print(f"Fail threshold for recheck: {FAIL_THRESHOLD} packets")
+    print(f"Recheck delay: {RECHECK_DELAY} seconds (2 minutes)")
     
+
+    # Check if SSL cert and key are provided (not empty strings)
+    if ssl_cert and ssl_key:
+        # Check if the SSL certificate and key files exist before starting Flask
+        if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+            print("Starting the app with SSL...")
+            ssl_context = (ssl_cert, ssl_key)
+        else:
+            print("SSL certificate or key file not found. Running without SSL.")
+    else:
+        print("No SSL configuration provided. Running without SSL.")
+
     # Run the Flask app
-    app.run(debug=True, host='0.0.0.0', port=9898)
+    app.run(
+        debug=False,
+        host=host,  # Use the host defined in the config.yaml
+        port=port,  # Use the port defined in the config.yaml
+        ssl_context=ssl_context  # Pass None if SSL is not enabled
+    )

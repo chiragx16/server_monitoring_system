@@ -1,0 +1,6 @@
+If you want to access using domain, example: https://monitor.dashboard.com:9898/
+do this:
+1. create self-signed certi for local ip : 127.0.0.1
+2. give certi path in config.yaml
+3. update hosts file (C:\Windows\System32\drivers\etc\hosts) : 127.0.0.1 monitor.dashboard.com
+4. Install certi in the "Trusted Root Certification Authority"

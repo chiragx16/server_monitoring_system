@@ -1,3 +1,14 @@
 .vscode/
+__pycache__/
+venv/
+
 
 servers.json
+config.yaml
+
+cert.crt
+cert.key
+cert.pfx
+
+
+sms.py

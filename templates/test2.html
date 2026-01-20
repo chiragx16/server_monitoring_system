@@ -239,7 +239,7 @@
     </footer>
 
     <script>
-        const REFRESH_INTERVAL = 5000;
+        const REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
         const charts = {};
         let downCount = 0;
         let isInitialLoad = true;
@@ -247,13 +247,13 @@
 
         // Configuration for time ranges in hours
         const TIME_RANGES = {
-            '5m': 5 / 60,   // 5 minutes in hours
-            '10m': 10 / 60, // 10 minutes in hours
-            '1h': 1,
             '3h': 3,
-            '5h': 5,
-            '24h': 24
+            '12h': 12,
+            '1d': 24,
+            '3d': 72,
+            '1w': 168
         };
+
 
         // Map to store the currently selected time range for each server
         const selectedTimeRanges = {};
